@@ -39,14 +39,14 @@ jobs:
       - name: Run notifier
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          TEST_SESSION_KEY: ${{ inputs.test_session_key }}
+          SESSION_KEY: ${{ inputs.session_key }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          if [ -n "$TEST_SESSION_KEY" ]; then
+          if [ -n "$SESSION_KEY" ]; then
             if [ "$DRY_RUN" = "true" ]; then
-              python main.py --test-session "$TEST_SESSION_KEY" --dry-run
+              python main.py --session-key "$TEST_SESSION_KEY" --dry-run
             else
-              python main.py --test-session "$TEST_SESSION_KEY"
+              python main.py --session-key "$SESSION_KEY"
             fi
           else
             python main.py
