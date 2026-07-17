@@ -1,0 +1,61 @@
+name: F1 Results Notifier
+
+on:
+  schedule:
+    # Runs every 10 minutes. GitHub may delay this slightly during peak
+    # load (e.g. right at the top of the hour) -- that's normal and fine
+    # for this use case.
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      test_session_key:
+        description: "session_key to test (leave blank for a normal scheduled-style run)"
+        required: false
+        type: string
+      dry_run:
+        description: "Dry run -- print instead of posting to Discord"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # needed so the workflow can commit the updated state.json
+
+jobs:
+  check-results:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run notifier
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TEST_SESSION_KEY: ${{ inputs.test_session_key }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ -n "$TEST_SESSION_KEY" ]; then
+            if [ "$DRY_RUN" = "true" ]; then
+              python main.py --test-session "$TEST_SESSION_KEY" --dry-run
+            else
+              python main.py --test-session "$TEST_SESSION_KEY"
+            fi
+          else
+            python main.py
+          fi
+
+      - name: Commit updated state (if changed)
+        run: |
+          git config user.name "f1-notifier-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add state.json
+          git diff --staged --quiet || git commit -m "Update notified sessions state"
+          git push
