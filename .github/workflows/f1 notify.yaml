@@ -8,7 +8,7 @@ on:
     - cron: "*/10 * * * *"
   workflow_dispatch:
     inputs:
-      test_session_key:
+      session_key:
         description: "session_key to test (leave blank for a normal scheduled-style run)"
         required: false
         type: string
