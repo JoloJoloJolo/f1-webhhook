@@ -167,10 +167,15 @@ def post_webhook(embeds):
             "DISCORD_WEBHOOK_URL is not set. Create a webhook in your Discord "
             "channel settings and set it as an environment variable."
         )
-    resp = requests.post(WEBHOOK_URL, json={"embeds": embeds}, timeout=15)
-    if resp.status_code >= 300:
-        print(f"Webhook post failed ({resp.status_code}): {resp.text}", file=sys.stderr)
-    resp.raise_for_status()
+    failures = []
+    for url in WEBHOOK_URLS:
+        resp = requests.post(url, json={"embeds": embeds}, timeout=15)
+        if resp.status_code >= 300:
+            masked = url[:50] + "..." if len(url) > 50 else url
+            print(f"Webhook post failed for {masked} ({resp.status_code}): {resp.text}", file=sys.stderr)
+            failures.append(url)
+    if failures:
+        raise RuntimeError(f"{len(failures)}/{len(WEBHOOK_URLS)} webhook post(s) failed.")
 
 
 def process_session(session, state=None, mark_notified=True):
