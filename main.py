@@ -51,7 +51,11 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 OPENF1_BASE = "https://api.openf1.org/v1"
-WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
+WEBHOOK_URLS = [
+    url.strip()
+    for url in os.environ.get("DISCORD_WEBHOOK_URL", "").split(",")
+    if url.strip()
+]
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
 
 # Session types that award championship points -> trigger a standings update.
