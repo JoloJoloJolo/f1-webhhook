@@ -1,46 +1,3 @@
-"""
-F1 Session Results -> Discord Notifier
-=======================================
-Watches the free OpenF1 API for F1 sessions that have just finished, then
-posts the full timing/results board to a Discord channel via a webhook.
-
-Watches the free OpenF1 API for F1 sessions that have just finished, then
-posts the full timing/results board to a Discord channel via a webhook.
-
-If the session was a Race or Sprint (the only session types that award
-championship points), it also posts the updated Drivers' and Constructors'
-championship standings.
-
-This uses OpenF1's free tier, which serves session results a few minutes
-after they're officially published -- no paid subscription required, since
-we're only ever asking for sessions that have already ended.
-
-Setup
------
-1. In Discord: Server Settings -> Integrations -> Webhooks -> New Webhook.
-   Pick (or create) the channel you want results posted to, then copy the
-   Webhook URL.
-2. pip install -r requirements.txt
-3. Set the DISCORD_WEBHOOK_URL environment variable to the URL from step 1.
-4. Run once to "bootstrap" (marks currently-finished sessions as already
-   seen, so you don't get a flood of historical results on first run):
-       python main.py
-5. Then either:
-   a) Run it on a schedule (cron / Task Scheduler) every ~5 minutes:
-       python main.py
-   b) Or run it continuously on a machine that's always on:
-       python main.py --loop --interval 5
-
-You can also pass explicit OpenF1 session keys for testing:
-    python main.py --session-key 9158
-    python main.py --session-key 9158 --session-key 9162
-    python main.py --session-keys 9158,9162
-
-Explicit session-key runs skip bootstrap/notified-state filtering, and do not
-write to state.json unless you also pass --mark-notified.
-See README.md for full setup instructions.
-"""
-
 import argparse
 import json
 import os
@@ -68,6 +25,14 @@ STANDINGS_SESSION_TYPES = {"Race", "Sprint"}
 LOOKBACK_DAYS = 4
 
 
+class OpenF1AccessRestrictedError(RuntimeError):
+    """Raised when OpenF1 returns 401 Unauthorized.
+    This happens when a session is currently live: OpenF1 restricts most
+    endpoints to paid subscribers while a session is in progress.
+    """
+    pass
+
+
 def load_state():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r") as f:
@@ -82,6 +47,11 @@ def save_state(state):
 
 def api_get(path, **params):
     resp = requests.get(f"{OPENF1_BASE}/{path}", params=params, timeout=15)
+    if resp.status_code == 401:
+        raise OpenF1AccessRestrictedError(
+            f"OpenF1 returned 401 Unauthorized for '{path}' -- a session is "
+            "likely live right now."
+        )
     resp.raise_for_status()
     return resp.json()
 
@@ -192,7 +162,7 @@ def build_standings_table(standings, name_lookup):
 
 
 def post_webhook(embeds):
-    if not WEBHOOK_URL:
+    if not WEBHOOK_URLS:
         raise RuntimeError(
             "DISCORD_WEBHOOK_URL is not set. Create a webhook in your Discord "
             "channel settings and set it as an environment variable."
@@ -281,44 +251,48 @@ def parse_session_keys(args):
 
 def run_for_session_keys(session_keys, mark_notified=False):
     state = load_state() if mark_notified else None
-    sessions, missing = get_sessions_by_keys(session_keys)
+    try:
+        sessions, missing = get_sessions_by_keys(session_keys)
 
-    for key in missing:
-        print(f"Session key {key}: not found.")
+        for key in missing:
+            print(f"Session key {key}: not found.")
 
-    for session in sessions:
-        sent = process_session(session, state=state, mark_notified=mark_notified)
-        status = "posted to Discord" if sent else "results not published yet"
-        print(
-            f"{session['session_key']} - "
-            f"{session['session_name']} ({session['location']} {session['year']}): "
-            f"{status}"
-        )
+        for session in sessions:
+            sent = process_session(session, state=state, mark_notified=mark_notified)
+            status = "posted to Discord" if sent else "results not published yet"
+            print(
+                f"{session['session_key']} - "
+                f"{session['session_name']} ({session['location']} {session['year']}): "
+                f"{status}"
+            )
+    except OpenF1AccessRestrictedError as exc:
+        print(f"Can't fetch right now: {exc}", file=sys.stderr)
 
 
 def run_once():
-    state = load_state()
-    notified = set(state["notified_session_keys"])
-    sessions = get_recent_finished_sessions()
+    try:
+        state = load_state()
+        notified = set(state["notified_session_keys"])
+        sessions = get_recent_finished_sessions()
 
-    if not state.get("bootstrapped"):
-        # First-ever run: mark everything currently finished as already seen,
-        # so we don't dump the whole recent history into Discord at once.
-        state["notified_session_keys"] = [s["session_key"] for s in sessions]
-        state["bootstrapped"] = True
-        save_state(state)
-        print(f"Bootstrapped. {len(sessions)} recent session(s) marked as already seen.")
-        return
+        if not state.get("bootstrapped"):
+            state["notified_session_keys"] = [s["session_key"] for s in sessions]
+            state["bootstrapped"] = True
+            save_state(state)
+            print(f"Bootstrapped. {len(sessions)} recent session(s) marked as already seen.")
+            return
 
-    new_sessions = [s for s in sessions if s["session_key"] not in notified]
-    if not new_sessions:
-        print("No new finished sessions.")
-        return
+        new_sessions = [s for s in sessions if s["session_key"] not in notified]
+        if not new_sessions:
+            print("No new finished sessions.")
+            return
 
-    for session in new_sessions:
-        sent = process_session(session, state)
-        status = "posted to Discord" if sent else "results not published yet, will retry"
-        print(f"{session['session_name']} ({session['location']} {session['year']}): {status}")
+        for session in new_sessions:
+            sent = process_session(session, state)
+            status = "posted to Discord" if sent else "results not published yet, will retry"
+            print(f"{session['session_name']} ({session['location']} {session['year']}): {status}")
+    except OpenF1AccessRestrictedError as exc:
+        print(f"Skipping this check: {exc}")
 
 
 def main():
